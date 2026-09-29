@@ -1,7 +1,7 @@
 [build]
   command = "npm run build"
   publish = ".next"
-  SECRETS_SCAN_OMIT_KEYS = "DEEPSEEK_API_KEY, DATABASE_URL"
+  SECRETS_SCAN_OMIT_KEYS = "DEEPSEEK_API_KEY,DATABASE_URL"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
