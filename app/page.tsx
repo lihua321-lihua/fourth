@@ -47,6 +47,12 @@ export default function Home() {
 
   return (
     <main className="flex-1 w-full px-4 py-12">
+      <a
+        href="/about"
+        className="fixed top-4 right-4 text-sm text-zinc-400 underline underline-offset-4 transition-colors hover:text-zinc-600 dark:hover:text-zinc-300"
+      >
+        产品说明
+      </a>
       {state.status === 'input' && (
         <InputForm
           form={state.form}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import type { AnalysisResult, ModelResult, QuestionAnswer, Sentiment } from '@/lib/types';
 import { summarizeBrand } from '@/lib/scoring';
 
@@ -30,6 +31,58 @@ export default function ResultView({ result, hideMock, onRerun, onBack, onShare 
   const brand = result.input.brand;
   const deepseek = result.models.find((m) => m.model === 'deepseek');
   const visibleModels = result.models.filter((m) => m.isReal || !hideMock);
+
+  // 导出当前结果为 Markdown 文件
+  const downloadMarkdown = () => {
+    const { breakdown, input } = result;
+    const mention = deepseek ? summarizeBrand(input.brand, deepseek.questions) : null;
+    const lines: string[] = [];
+    lines.push(`# ${input.brand} 的 AI 可见度报告`);
+    lines.push('');
+    lines.push(`- 行业：${input.industry}`);
+    lines.push(`- 竞品：${input.competitors.join('、') || '未填写'}`);
+    lines.push(`- 官网：${input.websiteUrl || '未填写'}`);
+    lines.push(`- 总分：**${breakdown.total} / 100**`);
+    if (mention) lines.push(`- 被提及：${mention.mentionedCount}/${mention.total} 次`);
+    if (result.degradedReason) lines.push(`- 提示：${result.degradedReason}`);
+    lines.push('');
+    lines.push('## 计算过程');
+    lines.push('');
+    lines.push('| 维度 | 权重 | 得分 | 加权分 |');
+    lines.push('| --- | --- | --- | --- |');
+    for (const d of breakdown.dimensions) {
+      lines.push(`| ${d.label} | ${d.weight} | ${d.score} | ${d.weighted} |`);
+    }
+    lines.push('');
+    lines.push('## 多模型对比');
+    lines.push('');
+    for (const m of visibleModels) {
+      const q = m.questions;
+      const mCount = q ? summarizeBrand(input.brand, q) : null;
+      lines.push(`### ${MODEL_NAMES[m.model] ?? m.model}（${m.isReal ? '真实' : '模拟'}）`);
+      if (mCount) lines.push(`- 提及：${mCount.mentionedCount}/${mCount.total} 次`);
+      if (m.isReal) {
+        lines.push('');
+        for (const qa of q) {
+          lines.push(`**${qa.question}**`);
+          lines.push('');
+          lines.push(qa.answer);
+          lines.push('');
+        }
+      }
+      lines.push('');
+    }
+    lines.push('---');
+    lines.push('');
+    lines.push(`*由 AI 可见度检查器生成，仅供参考*`);
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${input.brand}-AI-可见度报告.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="w-full max-w-3xl mx-auto space-y-6">
@@ -82,6 +135,12 @@ export default function ResultView({ result, hideMock, onRerun, onBack, onShare 
           className="rounded-xl border border-zinc-300 px-5 py-3 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
         >
           复制分享链接
+        </button>
+        <button
+          onClick={downloadMarkdown}
+          className="rounded-xl border border-zinc-300 px-5 py-3 text-sm font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+        >
+          导出报告
         </button>
         <button
           onClick={onBack}
@@ -297,52 +356,79 @@ function QuestionItem({ q }: { q: QuestionAnswer }) {
 
 function ConversionSection() {
   const [email, setEmail] = useState('');
-  const [subscribed, setSubscribed] = useState(false);
-  const [registered, setRegistered] = useState(false);
+  const [subscribed, setSubscribed] = useState<string | null>(null);
+  const [subBusy, setSubBusy] = useState(false);
+
+  const doSubscribe = async () => {
+    if (!email.trim() || subBusy) return;
+    setSubBusy(true);
+    setSubscribed(null);
+    try {
+      const res = await fetch('/api/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? '订阅失败');
+      setSubscribed(data.message ?? '订阅成功');
+    } catch (e) {
+      setSubscribed(e instanceof Error ? e.message : '订阅失败，请重试');
+    } finally {
+      setSubBusy(false);
+    }
+  };
 
   return (
     <section className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
-      <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">持续追踪你的 AI 可见度</h2>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        <div>
-          <label className="text-sm text-zinc-600 dark:text-zinc-300">
-            订阅每周 AI 可见度报告
-            <span className="ml-1 rounded bg-zinc-100 px-1 text-xs text-zinc-400 dark:bg-zinc-800">演示</span>
-          </label>
-          {subscribed ? (
-            <p className="mt-2 text-sm text-emerald-600">已记录订阅（演示，未真实发送邮件）</p>
-          ) : (
-            <div className="mt-2 flex gap-2">
-              <input
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@company.com"
-                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900"
-              />
-              <button
-                onClick={() => email.trim() && setSubscribed(true)}
-                className="shrink-0 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-50 dark:text-zinc-900"
-              >
-                订阅
-              </button>
-            </div>
-          )}
-        </div>
-        <div>
-          <p className="text-sm text-zinc-600 dark:text-zinc-300">
-            注册 GrowthLens，开启每周自动监控、历史趋势、竞品变化告警与团队协作
-            <span className="ml-1 rounded bg-zinc-100 px-1 text-xs text-zinc-400 dark:bg-zinc-800">演示</span>
-          </p>
-          {registered ? (
-            <p className="mt-2 text-sm text-emerald-600">已记录注册意向（演示，未真实创建账号）</p>
-          ) : (
+      <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">解锁更完整的 AI 可见度</h2>
+      <div className="mt-5 grid gap-5 sm:grid-cols-2">
+        <div className="rounded-xl border border-zinc-200 p-5 dark:border-zinc-700">
+          <p className="font-medium text-zinc-900 dark:text-zinc-50">免费订阅报告</p>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">每周接收报告，无需注册，门槛最低</p>
+          <ul className="mt-3 space-y-1 text-sm text-zinc-600 dark:text-zinc-300">
+            <li>每周围绕你的品牌自动生成</li>
+            <li>记录你的 AI 可见度分数变化</li>
+            <li>只需邮箱，随时可退订</li>
+          </ul>
+          <div className="mt-4 flex gap-2">
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@company.com"
+              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900"
+            />
             <button
-              onClick={() => setRegistered(true)}
-              className="mt-2 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-50 dark:text-zinc-900"
+              onClick={doSubscribe}
+              disabled={subBusy || !email.trim()}
+              className="shrink-0 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900"
             >
-              注册 GrowthLens
+              {subBusy ? '…' : '订阅'}
             </button>
-          )}
+          </div>
+          {subscribed && <p className="mt-2 text-sm text-emerald-600">{subscribed}</p>}
+        </div>
+
+        <div className="rounded-xl border border-zinc-300 bg-zinc-50 p-5 dark:border-zinc-600 dark:bg-zinc-800/40">
+          <p className="font-medium text-zinc-900 dark:text-zinc-50">创建 GrowthLens 账号</p>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">解锁完整监控与协作功能</p>
+          <ul className="mt-3 space-y-1 text-sm text-zinc-600 dark:text-zinc-300">
+            <li>每周自动监控与历史趋势</li>
+            <li>竞品变化实时告警</li>
+            <li>团队协作与分享</li>
+          </ul>
+          <Link
+            href="/auth"
+            className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200"
+          >
+            注册 GrowthLens
+          </Link>
+          <p className="mt-2 text-center text-sm text-zinc-400">
+            已有账号？{' '}
+            <Link href="/auth" className="text-zinc-600 underline-offset-4 hover:underline dark:text-zinc-300">
+              立即登录
+            </Link>
+          </p>
         </div>
       </div>
     </section>
